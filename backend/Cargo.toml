@@ -1,0 +1,51 @@
+[package]
+name = "whatsapp-clone-backend"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["ws", "multipart", "macros"] }
+axum-extra = { version = "0.9", features = ["typed-header"] }
+tokio = { version = "1.45", features = ["full"] }
+tokio-tungstenite = "0.23"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "macros", "uuid", "chrono"] }
+
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+deadpool-redis = "0.14"
+
+jsonwebtoken = "9.3"
+argon2 = "0.5"
+
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2.0", features = ["serde", "static_secrets"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+anyhow = "1"
+thiserror = "1"
+
+dotenv = "0.15"
+headers = "0.4"
+
+aws-sdk-s3 = "1"
+aws-config = "1"
+
+dashmap = "5"
+futures = "0.3"
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
