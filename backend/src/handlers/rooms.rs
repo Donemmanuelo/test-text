@@ -182,7 +182,7 @@ pub async fn add_member(
     )
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?
+    .map_err(|e| AppError::Internal(e.into()))?;
 
     match caller_role.as_deref() {
         Some("admin") => {}
@@ -239,7 +239,7 @@ pub async fn remove_member(
     )
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?
+    .map_err(|e| AppError::Internal(e.into()))?;
 
     let is_admin = caller_role.as_deref() == Some("admin");
     let is_self = auth.user_id == target_user_id;

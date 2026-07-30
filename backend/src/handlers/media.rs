@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use aws_sdk_s3::presigning::PresigningConfig;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

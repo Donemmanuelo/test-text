@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, FromRow)]
+#[derive(Deserialize, Debug, Clone, Serialize, FromRow)]
 pub struct Message {
     pub id: Uuid,
     pub room_id: Uuid,
