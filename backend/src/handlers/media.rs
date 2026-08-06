@@ -20,6 +20,12 @@ pub struct PresignRequest {
     pub room_id: Uuid,
 }
 
+#[derive(Deserialize)]
+pub struct AvatarPresignRequest {
+    pub filename: String,
+    pub content_type: String,
+}
+
 #[derive(Serialize)]
 pub struct PresignResponse {
     pub upload_url: String,
@@ -110,6 +116,61 @@ pub async fn presign_upload(
         key = %key,
         "Media presign URL generated"
     );
+
+    Ok(Json(PresignResponse {
+        upload_url,
+        file_url,
+        key,
+    }))
+}
+
+/// POST /api/media/presign-avatar
+/// Presigns a PUT URL for uploading a profile avatar. The client uploads the
+/// file directly, then calls PATCH /api/users/me with the returned file_url.
+pub async fn presign_avatar(
+    auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AvatarPresignRequest>,
+) -> AppResult<Json<PresignResponse>> {
+    if req.filename.trim().is_empty() {
+        return Err(AppError::BadRequest("filename cannot be empty".to_string()));
+    }
+    if req.content_type.trim().is_empty() {
+        return Err(AppError::BadRequest("content_type cannot be empty".to_string()));
+    }
+    if !req.content_type.starts_with("image/") {
+        return Err(AppError::BadRequest(
+            "Avatar must be an image (image/*)".to_string(),
+        ));
+    }
+
+    let ext = req.filename.rsplit('.').next().unwrap_or("bin");
+    let key = format!("avatars/{}/{}.{ext}", auth.user_id, Uuid::new_v4());
+
+    let presigning_config = PresigningConfig::builder()
+        .expires_in(std::time::Duration::from_secs(PRESIGN_EXPIRY_SECONDS))
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Presign config error: {e}")))?;
+
+    let presigned = state
+        .s3_client
+        .put_object()
+        .bucket(&state.config.s3_bucket)
+        .key(&key)
+        .content_type(&req.content_type)
+        .presigned(presigning_config)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("S3 presign error: {e}")))?;
+
+    let upload_url = presigned.uri().to_string();
+    let file_url = format!(
+        "{}/{}/{}",
+        state.config.s3_endpoint.trim_end_matches('/'),
+        state.config.s3_bucket,
+        key
+    );
+
+    tracing::info!(user_id = %auth.user_id, key = %key, "Avatar presign URL generated");
 
     Ok(Json(PresignResponse {
         upload_url,

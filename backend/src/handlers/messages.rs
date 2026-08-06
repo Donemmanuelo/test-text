@@ -11,7 +11,11 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     middleware::auth::AuthUser,
-    models::message::{CreateMessageRequest, EditMessageRequest, ListMessagesQuery, Message},
+    models::message::{
+        CreateMessageRequest, EditMessageRequest, ListMessagesQuery, Message, MessageWithDetails,
+        MessagesPage, ReplyPreview,
+    },
+    models::user::PublicUser,
     ws::events::{
         MessageDeletedPayload, MessageStatus, MessageStatusPayload, WsEvent,
     },
@@ -51,13 +55,75 @@ async fn publish_ws_event(state: &Arc<AppState>, event: &WsEvent) {
     }
 }
 
+/// Enrich a raw message row with the sender profile and read receipts so the
+/// client contract (sender, read_by) is satisfied.
+pub(crate) async fn enrich_message(
+    db: &sqlx::PgPool,
+    msg: Message,
+) -> AppResult<MessageWithDetails> {
+    let sender = sqlx::query_as!(
+        PublicUser,
+        r#"SELECT id, display_name, avatar_url, status_message, last_seen_at
+           FROM users WHERE id = $1"#,
+        msg.sender_id
+    )
+    .fetch_optional(db)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?
+    .unwrap_or_else(|| PublicUser {
+        id: msg.sender_id,
+        display_name: "Unknown".to_string(),
+        avatar_url: None,
+        status_message: None,
+        last_seen_at: None,
+    });
+
+    let read_by = sqlx::query_scalar!(
+        "SELECT user_id FROM message_reads WHERE message_id = $1",
+        msg.id
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let reply_to = match msg.reply_to_id {
+        Some(reply_id) => {
+            let row = sqlx::query!(
+                r#"SELECT m.content, m.deleted_at, u.display_name
+                   FROM messages m
+                   JOIN users u ON u.id = m.sender_id
+                   WHERE m.id = $1"#,
+                reply_id
+            )
+            .fetch_optional(db)
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+
+            row.map(|r| ReplyPreview {
+                id: reply_id,
+                content: if r.deleted_at.is_some() {
+                    "This message was deleted".to_string()
+                } else {
+                    r.content
+                },
+                sender_name: r.display_name,
+            })
+        }
+        None => None,
+    };
+
+    Ok(MessageWithDetails::from_message(
+        &msg, sender, read_by, reply_to,
+    ))
+}
+
 /// GET /api/rooms/:id/messages?before=<uuid>&limit=50
 pub async fn list_messages(
     auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(room_id): Path<Uuid>,
     Query(query): Query<ListMessagesQuery>,
-) -> AppResult<Json<Vec<Message>>> {
+) -> AppResult<Json<MessagesPage>> {
     require_room_member(&state.db, room_id, auth.user_id).await?;
 
     let limit = query
@@ -100,7 +166,23 @@ pub async fn list_messages(
         }
     };
 
-    Ok(Json(messages))
+    let mut enriched = Vec::with_capacity(messages.len());
+    for msg in messages {
+        enriched.push(enrich_message(&state.db, msg).await?);
+    }
+
+    // If we fetched a full page, the oldest message's id is the cursor for
+    // the next (older) page. A short page means there is nothing more.
+    let next_cursor = if enriched.len() as i64 == limit {
+        enriched.last().map(|m| m.id)
+    } else {
+        None
+    };
+
+    Ok(Json(MessagesPage {
+        messages: enriched,
+        next_cursor,
+    }))
 }
 
 /// POST /api/rooms/:id/messages
@@ -109,7 +191,7 @@ pub async fn create_message(
     State(state): State<Arc<AppState>>,
     Path(room_id): Path<Uuid>,
     Json(req): Json<CreateMessageRequest>,
-) -> AppResult<(StatusCode, Json<Message>)> {
+) -> AppResult<(StatusCode, Json<MessageWithDetails>)> {
     require_room_member(&state.db, room_id, auth.user_id).await?;
 
     if req.content.trim().is_empty() {
@@ -117,7 +199,7 @@ pub async fn create_message(
     }
 
     let content_type = req.content_type.as_deref().unwrap_or("text").to_string();
-    let valid_content_types = ["text", "image", "file", "audio"];
+    let valid_content_types = ["text", "image", "file", "audio", "video"];
     if !valid_content_types.contains(&content_type.as_str()) {
         return Err(AppError::BadRequest(format!(
             "Invalid content_type '{content_type}'. Must be one of: {valid_content_types:?}"
@@ -155,18 +237,20 @@ pub async fn create_message(
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
 
-    let event = WsEvent::MessageNew(message.clone());
+    let enriched = enrich_message(&state.db, message).await?;
+
+    let event = WsEvent::MessageNew(enriched.clone());
     state.hub.broadcast_to_room(room_id, event.clone());
     publish_ws_event(&state, &event).await;
 
     tracing::info!(
         room_id = %room_id,
-        message_id = %message.id,
+        message_id = %enriched.id,
         sender_id = %auth.user_id,
         "Message created"
     );
 
-    Ok((StatusCode::CREATED, Json(message)))
+    Ok((StatusCode::CREATED, Json(enriched)))
 }
 
 /// PATCH /api/messages/:id
@@ -175,7 +259,7 @@ pub async fn edit_message(
     State(state): State<Arc<AppState>>,
     Path(message_id): Path<Uuid>,
     Json(req): Json<EditMessageRequest>,
-) -> AppResult<Json<Message>> {
+) -> AppResult<Json<MessageWithDetails>> {
     if req.content.trim().is_empty() {
         return Err(AppError::BadRequest("Message content cannot be empty".to_string()));
     }
@@ -203,12 +287,14 @@ pub async fn edit_message(
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
 
-    let event = WsEvent::MessageEdited(updated.clone());
+    let enriched = enrich_message(&state.db, updated).await?;
+
+    let event = WsEvent::MessageEdited(enriched.clone());
     state.hub.broadcast_to_room(existing.room_id, event.clone());
     publish_ws_event(&state, &event).await;
 
     tracing::info!(message_id = %message_id, "Message edited");
-    Ok(Json(updated))
+    Ok(Json(enriched))
 }
 
 /// DELETE /api/messages/:id  (soft delete)

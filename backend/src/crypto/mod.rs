@@ -9,6 +9,8 @@
 //!
 //! NOTE: For a full Signal Protocol implementation, use the `libsignal-protocol` crate.
 //! This is a simplified MVP version.
+//! These helpers are intentionally not wired into message flows yet (see README).
+#![allow(dead_code)]
 
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{

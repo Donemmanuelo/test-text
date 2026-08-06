@@ -1,55 +1,70 @@
 # WhatsApp Clone
 
-> A self-hosted, real-time messaging application built with a Rust backend and Next.js frontend.
+> A self-hosted, real-time messaging application built with a Rust + Axum backend and a Next.js frontend — with 1:1 chats, groups, media sharing, and peer-to-peer voice/video calls.
 
 ![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange?logo=rust)
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue?logo=postgresql)
 ![Redis](https://img.shields.io/badge/Redis-7-red?logo=redis)
+![WebRTC](https://img.shields.io/badge/WebRTC-peer--to--peer-blueviolet)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
 
 ## Features
 
-- **1:1 private messaging** — direct chats between any two users
-- **Group chats** — up to 256 members per room
-- **Message status** — sent → delivered → read receipts with real-time updates
-- **End-to-end encryption** — ChaCha20-Poly1305 symmetric encryption (X25519 key exchange upgrade path)
-- **Media uploads** — images and files via S3-compatible presigned URLs
-- **User presence** — online indicator and last-seen timestamp
-- **Real-time WebSocket fanout** — in-process broadcast + Redis Pub/Sub for multi-server deployments
-- **JWT authentication** — short-lived access tokens (15 min) + refresh tokens (7 days), Argon2 password hashing
-- **Message editing and soft-delete**
-- **Typing indicators**
-- **Cursor-based pagination** for message history
+**Messaging**
+
+- **1:1 private chats** and **group chats** (create groups, add members, admin badges)
+- **DM deduplication** — starting a chat with someone you already talk to reuses the existing room
+- **Read receipts** — sent → delivered → read ticks with real-time updates
+- **Unread badges**, **typing indicators**, and **presence** (online / last-seen)
+- **Message actions** — reply (with quote preview), edit (own text messages), soft-delete (own messages)
+- **Cursor-based pagination** for message history (oldest → newest, "load older" on scroll)
+
+**Media**
+
+- **Inline media rendering** — images, videos, audio, and generic files inside message bubbles
+- **Camera capture** — take a photo from the composer and send it as an image message
+- **S3-compatible storage** (MinIO locally, Supabase Storage in production) via short-lived presigned URLs
+
+**Voice & video calls**
+
+- **Peer-to-peer WebRTC** calls (voice and video) with in-app signaling over the existing WebSocket
+- Incoming-call screen with **ringtone**, outgoing ringback, **call timer**, **mute**, and a mirrored local video preview (picture-in-picture)
+- Automatic cleanup on hangup, missed-call handling, and connection-loss detection (watchdog)
+
+**App & settings**
+
+- **Settings page** — profile (avatar upload, display name, status message), notification toggles (**message sounds** + **desktop notifications**), and chat prefs (**Enter-to-send**, **message previews**), all persisted in the browser
+- **Chat header menu** — contact/group info, search in chat (live filtering), mute/unmute notifications, leave group / delete chat
+- **JWT auth** — short-lived access tokens + refresh-token rotation, Argon2 password hashing
 
 ---
 
 ## Tech Stack
 
-| Layer        | Technology                              | Purpose                                    |
-|--------------|-----------------------------------------|--------------------------------------------|
-| **Backend**  | Axum 0.7 (Rust)                        | HTTP API + WebSocket server                |
-|              | SQLx 0.8                               | Async PostgreSQL driver with compile-time queries |
-|              | Redis (deadpool-redis)                 | Pub/Sub fanout, presence, rate limiting    |
-|              | ChaCha20-Poly1305                      | Message encryption                         |
-|              | Argon2                                 | Password hashing                           |
-|              | jsonwebtoken                           | JWT issuance & verification                |
-|              | tower-governor                         | Rate limiting middleware                   |
-| **Frontend** | Next.js 14 (App Router)               | Server & client React components           |
-|              | TypeScript                             | Type safety                                |
-|              | Tailwind CSS                           | Utility-first styling                      |
-|              | Zustand                                | Global state management                    |
-|              | React Query (TanStack Query)           | Server-state caching & mutations           |
-|              | native WebSocket API                   | Real-time events                           |
-| **Database** | PostgreSQL 16                          | Primary data store (Neon in prod, Docker locally) |
-| **Cache**    | Redis 7                                | Pub/Sub, session cache, rate limits        |
-| **Storage**  | S3-compatible (Supabase Storage / MinIO) | Media file storage via presigned URLs    |
-| **Hosting**  | Railway                                | Rust backend (Docker deploy)              |
-|              | Vercel                                 | Next.js frontend (edge-optimised)         |
-|              | Neon                                   | Serverless PostgreSQL in production       |
-|              | Upstash                                | Serverless Redis in production            |
+| Layer        | Technology                                   | Purpose                                       |
+|--------------|----------------------------------------------|-----------------------------------------------|
+| **Backend**  | Axum 0.7 (Rust)                              | HTTP API + WebSocket server                   |
+|              | SQLx 0.8                                     | Async PostgreSQL with compile-time queries    |
+|              | Redis (deadpool-redis)                       | Pub/Sub fanout + presence tracking            |
+|              | Argon2                                       | Password hashing                              |
+|              | jsonwebtoken                                 | JWT issuance & verification                   |
+|              | aws-sdk-s3                                   | Presigned URLs for media uploads              |
+| **Frontend** | Next.js 14 (App Router)                      | Server & client React components              |
+|              | TypeScript                                   | Type safety                                   |
+|              | Tailwind CSS                                 | Utility-first styling                         |
+|              | Zustand                                      | Global state (auth, chat, settings, calls)    |
+|              | TanStack Query                               | Server-state caching & mutations              |
+|              | native WebSocket API                         | Real-time events                              |
+|              | native WebRTC (RTCPeerConnection)            | Peer-to-peer voice/video calls                |
+| **Database** | PostgreSQL 16                                | Primary data store (Neon in prod, Docker locally) |
+| **Cache**    | Redis 7                                      | Pub/Sub + presence                            |
+| **Storage**  | S3-compatible (MinIO / Supabase Storage)     | Media files via presigned URLs                |
+| **Hosting**  | Railway (backend) + Vercel (frontend)        | Reference production deployment               |
+
+> **Note on encryption:** the backend includes a ChaCha20-Poly1305 / X25519 crypto module as *scaffolding* for future end-to-end encryption, but it is **not yet wired into message flows** — messages are currently stored in plaintext. Do not treat this project as secure for production data.
 
 ---
 
@@ -58,15 +73,14 @@
 ```
 ┌───────────────────────────────────────────────────────────┐
 │                        Client Browser                      │
-│                    (Next.js SPA / SSR)                     │
+│      (Next.js SPA — messaging UI + WebRTC call layer)      │
 └───────────────────┬───────────────────┬───────────────────┘
                     │ HTTPS REST        │ WSS WebSocket
                     ▼                   ▼
 ┌───────────────────────────────────────────────────────────┐
-│                   Vercel  (Next.js 14)                     │
-│   - Server-side rendering & static generation             │
-│   - API routes proxy to Railway backend                   │
-│   - Edge-cached static assets                             │
+│                  Vercel  (Next.js 14)                      │
+│   - SPA pages for chat, room, and settings                 │
+│   - /api/auth/* routes proxy refresh/logout to the backend │
 └───────────────────────────────┬───────────────────────────┘
                                 │ HTTPS / WSS
                                 ▼
@@ -75,27 +89,22 @@
 │   - Auth: POST /api/auth/*                                │
 │   - Users: GET|PATCH /api/users/*                         │
 │   - Rooms: GET|POST /api/rooms/*                          │
-│   - Messages: GET|POST|PATCH|DELETE /api/rooms/:id/msgs   │
-│   - Media presign: POST /api/media/presign                │
-│   - WebSocket: WS /api/ws?token=<jwt>                     │
+│   - Messages: GET|POST|PATCH|DELETE /api/rooms/:id/messages│
+│   - Media presign: POST /api/media/presign(-avatar)       │
+│   - WebSocket: WS /api/ws?token=<jwt>  (messages, presence,│
+│     typing, read receipts, call signaling)                │
 │   - Health: GET /health                                   │
 └──────┬───────────────────────┬──────────────────┬─────────┘
        │ SQL (TLS)             │ Redis protocol   │ HTTPS presigned
        ▼                       ▼                  ▼
 ┌─────────────┐   ┌─────────────────────┐  ┌────────────────┐
 │    Neon     │   │  Upstash Redis      │  │ Supabase / S3  │
-│ PostgreSQL  │   │  (Pub/Sub, cache,   │  │ Object Storage │
-│ (serverless)│   │   rate limit state) │  │ (media files)  │
-└─────────────┘   └─────────────────────┘  └────────────────┘
+│ PostgreSQL  │   │  (Pub/Sub, presence)│  │ Object Storage │
+│ (serverless)│   └─────────────────────┘  │ (media files)  │
+└─────────────┘                             └────────────────┘
 ```
 
-**Layer explanations:**
-
-- **Vercel / Next.js** — hosts the React frontend, handles SSR/ISR, and serves the client bundle. All authenticated API calls proxy to the Railway backend.
-- **Railway / Axum** — stateless Rust API container. Handles business logic, JWT validation, encryption, and WebSocket connections. Horizontally scalable; Redis Pub/Sub ties multiple instances together.
-- **Neon PostgreSQL** — serverless PostgreSQL. Scales to zero between requests, ideal for production cost management.
-- **Upstash Redis** — serverless Redis for WebSocket fanout, presence tracking, and rate-limit counters.
-- **Supabase Storage / MinIO** — S3-compatible blob store. The backend issues short-lived presigned PUT/GET URLs; the client uploads/downloads media directly.
+**How calls work:** signaling (`call.offer` / `call.answer` / `call.ice` / `call.end` / `call.decline`) is relayed through the backend WebSocket so the two browsers can find each other. Once the peer connection is established, **audio and video flow directly browser-to-browser** (WebRTC) — media never touches the server. A STUN server (`stun.l.google.com`) helps with NAT traversal; no TURN server is configured, so calls across restrictive networks may not connect.
 
 ---
 
@@ -103,11 +112,10 @@
 
 ### Prerequisites
 
-- [Rust (stable, via rustup)](https://rustup.rs/) — `rustup update stable`
+- [Rust (stable, via rustup)](https://rustup.rs/)
 - [Node.js 20+](https://nodejs.org/)
 - [Docker + Docker Compose](https://docs.docker.com/get-docker/)
 - [sqlx-cli](https://github.com/launchbynttdata/sqlx): `cargo install sqlx-cli --no-default-features --features rustls,postgres`
-- Git
 
 ### Step-by-step setup
 
@@ -122,59 +130,66 @@ cd whatsapp-clone
 
 ```bash
 docker compose up -d
+docker compose ps   # all three should show "healthy"
 ```
 
-Wait for services to become healthy:
+**3. Create the MinIO bucket (once)**
 
-```bash
-docker compose ps   # all should show "healthy"
-```
+The bucket name defaults to `chat-media`. Create it and make it **public**
+(media URLs are served directly by MinIO):
 
-**3. Configure the backend**
+1. Open the MinIO console at [http://localhost:9001](http://localhost:9001) and sign in with `minioadmin` / `minioadmin`.
+2. **Buckets** → **Create Bucket** → name it `chat-media` → **Create**.
+3. Select the bucket → **Access Policy** → set **Download** (public read) → **Set**.
+
+> A **public** bucket is required — the frontend loads images/videos straight
+> from the object URL. (This mirrors Supabase Storage's public-bucket pattern.)
+> CLI users can do the same with the `minio/mc` client:
+> `docker run --rm --network host minio/mc mb local/chat-media` etc.
+
+**4. Configure the backend**
 
 ```bash
 cp backend/.env.example backend/.env
-# Open backend/.env and fill in the values (see Environment Variables section)
+# Set JWT_SECRET to any random 32+ char string. All other defaults already
+# match the docker-compose services.
 ```
 
-The defaults in `.env.example` already match the Docker Compose services,
-so you only need to set `JWT_SECRET` (any random 32+ char string) for local dev.
-
-**4. Configure the frontend**
+**5. Configure the frontend**
 
 ```bash
 cp frontend/.env.local.example frontend/.env.local
-# NEXT_PUBLIC_API_URL=http://localhost:8080
-# NEXT_PUBLIC_WS_URL=ws://localhost:8080
 ```
 
-**5. Run database migrations**
+**6. Run database migrations**
 
 ```bash
 cd backend
 cargo sqlx migrate run
 ```
 
-**6. Start the backend**
+**7. Start the backend** (listens on http://localhost:8080)
 
 ```bash
-# still in backend/
 cargo run
-# API now listening on http://localhost:8080
 ```
 
-**7. Start the frontend**
+**8. Start the frontend** (at http://localhost:3000)
 
 ```bash
 cd ../frontend
 npm install
 npm run dev
-# App now at http://localhost:3000
 ```
 
-**8. Open the app**
+**9. Open the app**
 
 Navigate to [http://localhost:3000](http://localhost:3000) and register an account.
+For a real-time test, open a second browser (or incognito window), register
+another user, and start a chat.
+
+> **Camera access:** `getUserMedia` (camera capture + video calls) only works on
+> `localhost` or HTTPS origins. Video calls also need a working webcam on both ends.
 
 ---
 
@@ -182,82 +197,47 @@ Navigate to [http://localhost:3000](http://localhost:3000) and register an accou
 
 ### A. Set up Neon (Production Database)
 
-1. Go to [https://neon.tech](https://neon.tech) and create a free account.
-2. Click **New Project** → choose the region closest to your Railway region.
-3. Name the database `whatsapp_clone`.
-4. Copy the **connection string** — it looks like:
-   ```
-   postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/whatsapp_clone?sslmode=require
-   ```
-5. Run migrations against Neon from your local machine:
+1. Create a free project at [https://neon.tech](https://neon.tech).
+2. Copy the **connection string** (e.g. `postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/whatsapp_clone?sslmode=require`).
+3. Run migrations against it:
    ```bash
    cd backend
-   DATABASE_URL="postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/whatsapp_clone?sslmode=require" \
-     cargo sqlx migrate run
+   DATABASE_URL="<neon-connection-string>" cargo sqlx migrate run
    ```
 
 ### B. Set up Supabase Storage (Media Files)
 
-1. Go to [https://supabase.com](https://supabase.com) and create a free project.
-2. Navigate to **Storage** → **New bucket** → name it `chat-media` → set to **Public**.
-3. Go to **Settings** → **Storage** → **S3 Access** → enable S3 compatibility.
-4. Copy **Endpoint**, **Access key ID**, and **Secret access key**.
-5. These map to: `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`.
-6. Set `S3_BUCKET=chat-media` and `S3_REGION=us-east-1` (or your Supabase region).
+1. Create a free project at [https://supabase.com](https://supabase.com).
+2. **Storage** → **New bucket** → name it `chat-media` → set to **Public**.
+3. **Settings** → **Storage** → **S3 Access** → enable S3 compatibility.
+4. Copy **Endpoint**, **Access key ID**, and **Secret access key** → these map to `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`.
+5. Set `S3_BUCKET=chat-media` and `S3_REGION=us-east-1` (or your Supabase region).
 
 ### C. Set up Redis (Upstash)
 
-1. Go to [https://upstash.com](https://upstash.com) and create a **Redis** database.
-2. Choose the region closest to your Railway deployment.
-3. Copy the **Redis URL** — format: `redis://default:password@host:port`
-4. This becomes your `REDIS_URL` env var.
+Create a Redis database at [https://upstash.com](https://upstash.com) and copy its URL (`redis://default:password@host:port`) as `REDIS_URL`.
 
-### D. Deploy Backend to Railway
+### D. Deploy the Backend to Railway
 
 1. Push your code to GitHub.
-2. Go to [https://railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**.
-3. Select your repository. Set **Root Directory** to `backend`.
-4. Railway detects the `Dockerfile` (via `railway.toml`) and builds it automatically.
-5. Add all environment variables from `backend/.env.example` under **Variables** in the Railway dashboard.
-6. **Important:** Railway injects `$PORT` automatically — ensure `main.rs` reads it:
-   ```rust
-   let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-   let addr = format!("0.0.0.0:{}", port).parse()?;
-   ```
-7. Set `DATABASE_URL` to your Neon connection string.
-8. After the first successful deploy, copy the generated Railway URL
-   (e.g., `https://your-app.railway.app`) — you'll need it for the frontend.
+2. [https://railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**.
+3. Select the repo; set **Root Directory** to `backend` (the `railway.toml` + `Dockerfile` are picked up automatically).
+4. Add all variables from `backend/.env.example` under **Variables** (Railway injects `PORT` itself; set `DATABASE_URL` to your Neon string).
+5. Railway's health check hits `GET /health` (returns `{ "status": "ok" }`) every 30s.
 
-> **Health check:** Railway calls `GET /health` every 30 s. The backend exposes
-> this endpoint returning `{ "status": "ok" }` with HTTP 200.
+### E. Deploy the Frontend to Vercel
 
-### E. Deploy Frontend to Vercel
-
-1. Go to [https://vercel.com](https://vercel.com) → **New Project** → **Import from GitHub**.
-2. Select your repository. Set **Root Directory** to `frontend`.
-3. Add these environment variables:
+1. [https://vercel.com](https://vercel.com) → **New Project** → **Import from GitHub**, root directory `frontend`.
+2. Add environment variables:
    ```
    NEXT_PUBLIC_API_URL=https://your-app.railway.app
    NEXT_PUBLIC_WS_URL=wss://your-app.railway.app
    ```
-4. Click **Deploy** — Vercel auto-detects Next.js and builds it.
-5. Your app is live at `https://your-app.vercel.app`.
+3. Backend env: set `CORS_ORIGIN=https://your-app.vercel.app` so Axum's CORS allows the origin.
 
-> **CORS:** Ensure `FRONTEND_URL=https://your-app.vercel.app` is set in the Railway
-> backend env vars so Axum's CORS middleware allows the origin.
-
-### F. Alternative: Deploy Backend to Fly.io
-
-```bash
-# Install flyctl: https://fly.io/docs/hands-on/install-flyctl/
-cd backend
-fly launch          # detects Dockerfile, prompts for app name + region
-fly secrets set DATABASE_URL="..." REDIS_URL="..." JWT_SECRET="..." # etc.
-fly deploy
-```
-
-Fly.io will build the Docker image, push it to their registry, and serve it on
-`https://your-app.fly.dev`. Update your Vercel env vars accordingly.
+> **Note:** WebRTC calls use STUN only (no TURN). For production reliability on
+> restrictive networks, add a TURN server (e.g. Cloudflare Calls or coturn) to
+> `RTC_CONFIG` in `frontend/src/lib/rtc.ts`.
 
 ---
 
@@ -265,28 +245,28 @@ Fly.io will build the Docker image, push it to their registry, and serve it on
 
 ### Backend (`backend/.env`)
 
-| Variable               | Example                                              | Description                                          |
-|------------------------|------------------------------------------------------|------------------------------------------------------|
-| `DATABASE_URL`         | `postgresql://postgres:postgres@localhost:5432/whatsapp_clone` | PostgreSQL connection string               |
-| `REDIS_URL`            | `redis://localhost:6379`                             | Redis connection string                              |
-| `JWT_SECRET`           | `super-secret-random-32-char-string`                 | HMAC-SHA256 signing secret for JWTs                 |
-| `JWT_ACCESS_EXPIRY_SECS` | `900`                                              | Access token lifetime in seconds (default: 15 min)  |
-| `JWT_REFRESH_EXPIRY_SECS` | `604800`                                          | Refresh token lifetime in seconds (default: 7 days) |
-| `S3_ENDPOINT`          | `https://xxx.supabase.co/storage/v1/s3`              | S3-compatible endpoint URL                           |
-| `S3_ACCESS_KEY_ID`     | `your-access-key`                                    | S3 access key ID                                     |
-| `S3_SECRET_ACCESS_KEY` | `your-secret-key`                                    | S3 secret access key                                 |
-| `S3_BUCKET`            | `chat-media`                                         | S3 bucket name for media uploads                     |
-| `S3_REGION`            | `us-east-1`                                          | S3 region (or `auto` for Cloudflare R2)             |
-| `FRONTEND_URL`         | `http://localhost:3000`                              | Allowed CORS origin                                  |
-| `PORT`                 | `8080`                                               | HTTP listen port (auto-set by Railway)               |
-| `RUST_LOG`             | `info`                                               | Log level: `trace`, `debug`, `info`, `warn`, `error` |
+| Variable                    | Default                          | Description                                              |
+|-----------------------------|----------------------------------|----------------------------------------------------------|
+| `DATABASE_URL`              | *(required)*                     | PostgreSQL connection string                             |
+| `REDIS_URL`                 | *(required)*                     | Redis connection string                                  |
+| `JWT_SECRET`                | *(required)*                     | HMAC signing secret — **must be ≥ 32 characters**        |
+| `ACCESS_TOKEN_EXPIRY_SECONDS` | `900`                          | Access-token lifetime in seconds (15 min)                |
+| `REFRESH_TOKEN_EXPIRY_DAYS` | `7`                              | Refresh-token lifetime in days                           |
+| `S3_ENDPOINT`               | *(required)*                     | S3-compatible endpoint (MinIO: `http://localhost:9000`)  |
+| `S3_ACCESS_KEY`             | *(required)*                     | S3 access key (MinIO dev: `minioadmin`)                  |
+| `S3_SECRET_KEY`             | *(required)*                     | S3 secret key (MinIO dev: `minioadmin`)                  |
+| `S3_BUCKET`                 | *(required)*                     | Bucket name (default `chat-media`, must be **public**)   |
+| `S3_REGION`                 | `us-east-1`                      | S3 region (or `auto` for Cloudflare R2)                  |
+| `CORS_ORIGIN`               | `http://localhost:3000`          | Comma-separated list of allowed frontend origins         |
+| `PORT`                      | `8080`                           | HTTP listen port (auto-set by Railway)                   |
+| `RUST_LOG`                  | `info`                           | Log level: `trace`, `debug`, `info`, `warn`, `error`     |
 
 ### Frontend (`frontend/.env.local`)
 
-| Variable                | Example                               | Description                              |
-|-------------------------|---------------------------------------|------------------------------------------|
-| `NEXT_PUBLIC_API_URL`   | `http://localhost:8080`               | Backend REST API base URL                |
-| `NEXT_PUBLIC_WS_URL`    | `ws://localhost:8080`                 | Backend WebSocket base URL               |
+| Variable              | Example                 | Description                      |
+|-----------------------|-------------------------|----------------------------------|
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8080` | Backend REST API base URL        |
+| `NEXT_PUBLIC_WS_URL`  | `ws://localhost:8080`   | Backend WebSocket base URL       |
 
 ---
 
@@ -294,40 +274,16 @@ Fly.io will build the Docker image, push it to their registry, and serve it on
 
 Migrations live in `backend/migrations/` and are managed by **sqlx-cli**.
 
-### Run all pending migrations
-
 ```bash
 cd backend
-cargo sqlx migrate run
+cargo sqlx migrate run      # apply pending migrations
+cargo sqlx migrate revert   # revert the most recent one
+cargo sqlx migrate add <description>   # create a new migration
 ```
 
-### Revert the most recent migration
-
-```bash
-cargo sqlx migrate revert
-```
-
-### Add a new migration
-
-```bash
-cargo sqlx migrate add <description>
-# e.g.: cargo sqlx migrate add add_reactions_table
-# Creates: backend/migrations/YYYYMMDDHHMMSS_add_reactions_table.sql
-```
-
-### Offline mode (CI / Docker build without a live DB)
-
-SQLx can verify queries at compile time without a live database by using a
-pre-generated metadata file:
-
-```bash
-cd backend
-cargo sqlx prepare           # writes .sqlx/ directory
-git add .sqlx/               # commit this with your PR
-```
-
-Set `SQLX_OFFLINE=true` in your CI/Dockerfile environment so `cargo build`
-uses the cached metadata instead of connecting to a database.
+**Offline mode (CI / Docker build without a live DB):** run `cargo sqlx prepare`
+to generate the `backend/.sqlx/` metadata and commit it, then set
+`SQLX_OFFLINE=true` in the build environment.
 
 ---
 
@@ -335,89 +291,97 @@ uses the cached metadata instead of connecting to a database.
 
 ### REST Endpoints
 
-| Method   | Path                              | Auth | Description                                  |
-|----------|-----------------------------------|------|----------------------------------------------|
-| `POST`   | `/api/auth/register`              | No   | Register with email, password, display_name  |
-| `POST`   | `/api/auth/login`                 | No   | Login, returns access + refresh tokens       |
-| `POST`   | `/api/auth/refresh`               | No   | Exchange refresh token for new token pair    |
-| `POST`   | `/api/auth/logout`                | Yes  | Revoke refresh token                         |
-| `GET`    | `/api/users/me`                   | Yes  | Get current user profile                     |
-| `PATCH`  | `/api/users/me`                   | Yes  | Update display_name, avatar_url, status      |
-| `GET`    | `/api/users/:id`                  | Yes  | Get public profile of any user               |
-| `GET`    | `/api/users/search?q=`            | Yes  | Search users by display_name or email        |
-| `GET`    | `/api/rooms`                      | Yes  | List rooms the current user belongs to       |
-| `POST`   | `/api/rooms`                      | Yes  | Create a room (DM or group)                  |
-| `GET`    | `/api/rooms/:id`                  | Yes  | Get room details                             |
-| `GET`    | `/api/rooms/:id/members`          | Yes  | List room members                            |
-| `POST`   | `/api/rooms/:id/members`          | Yes  | Add a member to a group                      |
-| `DELETE` | `/api/rooms/:id/members/:user_id` | Yes  | Remove a member from a group                 |
-| `GET`    | `/api/rooms/:id/messages`         | Yes  | Fetch messages (cursor pagination)           |
-| `POST`   | `/api/rooms/:id/messages`         | Yes  | Send a message                               |
-| `PATCH`  | `/api/messages/:id`               | Yes  | Edit a message                               |
-| `DELETE` | `/api/messages/:id`               | Yes  | Soft-delete a message                        |
-| `POST`   | `/api/messages/:id/read`          | Yes  | Mark message as read (triggers WS receipt)   |
-| `POST`   | `/api/media/presign`              | Yes  | Get a presigned S3 PUT URL for media upload  |
-| `GET`    | `/health`                         | No   | Health check — returns `{ "status": "ok" }`  |
+| Method   | Path                                 | Auth | Description                                      |
+|----------|--------------------------------------|------|--------------------------------------------------|
+| `POST`   | `/api/auth/register`                 | No   | Register (email, password, display_name)         |
+| `POST`   | `/api/auth/login`                    | No   | Login → access + refresh tokens                 |
+| `POST`   | `/api/auth/refresh`                  | No   | Exchange refresh token for a new pair            |
+| `POST`   | `/api/auth/logout`                   | Yes  | Revoke the refresh token                         |
+| `GET`    | `/api/users/me`                      | Yes  | Current user profile                             |
+| `PATCH`  | `/api/users/me`                      | Yes  | Update display_name / avatar_url / status        |
+| `GET`    | `/api/users/:id`                     | Yes  | Public profile of a user                         |
+| `GET`    | `/api/users/search?q=`               | Yes  | Search users by display name or email            |
+| `GET`    | `/api/rooms`                         | Yes  | List rooms (enriched: members, last message)     |
+| `POST`   | `/api/rooms`                         | Yes  | Create DM or group (DMs are deduplicated)        |
+| `GET`    | `/api/rooms/:id`                     | Yes  | Room details (enriched)                          |
+| `GET`    | `/api/rooms/:id/members`             | Yes  | List room members                                |
+| `POST`   | `/api/rooms/:id/members`             | Yes  | Add a member (groups only)                       |
+| `DELETE` | `/api/rooms/:id/members/:user_id`    | Yes  | Remove a member / leave a room                   |
+| `GET`    | `/api/rooms/:id/messages`            | Yes  | Message history → `{ messages, next_cursor }`    |
+| `POST`   | `/api/rooms/:id/messages`            | Yes  | Send text/image/video/audio/file message         |
+| `PATCH`  | `/api/messages/:id`                  | Yes  | Edit a message                                   |
+| `DELETE` | `/api/messages/:id`                  | Yes  | Soft-delete a message                            |
+| `POST`   | `/api/messages/:id/read`             | Yes  | Mark read (triggers read receipt)                |
+| `POST`   | `/api/media/presign`                 | Yes  | Presigned PUT URL for room media                 |
+| `POST`   | `/api/media/presign-avatar`          | Yes  | Presigned PUT URL for a profile avatar           |
+| `GET`    | `/api/ws`                            | Yes* | WebSocket upgrade (`?token=<jwt>`)               |
+| `GET`    | `/health`                            | No   | Liveness probe → `{ "status": "ok" }`            |
+
+\* The WebSocket authenticates via the `token` query parameter (JWT).
+
+**Message shape** (used by `message.new` / `message.edited` and list responses):
+`{ id, room_id, sender_id, content, content_type ("text"|"image"|"video"|"audio"|"file"),
+reply_to_id, reply_to (preview), edited_at, deleted_at, created_at, sender (user),
+read_by (user ids) }`.
+
+**Room shape:** `{ id, name, is_group, created_by, created_at, members (with user profiles),
+last_message, unread_count }`.
 
 ### WebSocket Events
 
 Connect to `WS /api/ws?token=<access_jwt>`.
 
-#### Events pushed **from server → client**
+#### Server → client
 
-| Event              | Payload fields                                         | Description                         |
-|--------------------|--------------------------------------------------------|-------------------------------------|
-| `message.new`      | `room_id`, `message` (full Message object)            | New message arrived                 |
-| `message.edited`   | `room_id`, `message_id`, `content`, `edited_at`       | Message was edited                  |
-| `message.deleted`  | `room_id`, `message_id`                               | Message was soft-deleted            |
-| `message.status`   | `room_id`, `message_id`, `status`, `user_id`          | Delivered / read receipt update     |
-| `presence.update`  | `user_id`, `is_online`, `last_seen`                   | User came online or went offline    |
-| `typing.start`     | `room_id`, `user_id`                                  | User started typing                 |
-| `typing.stop`      | `room_id`, `user_id`                                  | User stopped typing                 |
+| Event             | Payload fields                                        | Description                          |
+|-------------------|-------------------------------------------------------|--------------------------------------|
+| `message.new`     | full `Message` object                                 | New message in a room                |
+| `message.edited`  | full `Message` object                                 | Message was edited                   |
+| `message.deleted` | `{ id, room_id }`                                     | Message was soft-deleted             |
+| `message.status`  | `{ message_id, user_id, status: "delivered"\|"read" }`| Read/delivered receipt               |
+| `presence.update` | `{ user_id, online, last_seen }`                      | Presence change                      |
+| `typing.start`    | `{ user_id, room_id }`                                | User started typing                  |
+| `typing.stop`     | `{ user_id, room_id }`                                | User stopped typing                  |
+| `call.offer`      | `{ caller_id, sdp, mode: "voice"\|"video" }`          | Incoming call offer                  |
+| `call.answer`     | `{ callee_id, sdp }`                                  | Callee accepted                      |
+| `call.ice`        | `{ user_id, candidate }`                              | WebRTC ICE candidate                 |
+| `call.end`        | `{ user_id }`                                         | Call ended by the peer               |
+| `call.decline`    | `{ user_id }`                                         | Incoming call was declined           |
 
-#### Events sent **from client → server**
+#### Client → server
 
-| Event            | Payload fields        | Description                        |
-|------------------|-----------------------|------------------------------------|
-| `typing.start`   | `room_id`             | Notify others you are typing       |
-| `typing.stop`    | `room_id`             | Notify others you stopped typing   |
-| `presence.ping`  | *(empty)*             | Keep presence alive (send ~30 s)   |
+| Event            | Payload fields                                            | Description                        |
+|------------------|-----------------------------------------------------------|------------------------------------|
+| `presence.ping`  | *(none)*                                                  | Keep presence alive (sent ~30s)    |
+| `typing.start`   | `{ room_id }`                                             | Notify others you're typing        |
+| `typing.stop`    | `{ room_id }`                                             | Notify others you stopped typing   |
+| `call.offer`     | `{ target_user_id, sdp, mode }`                           | Ring another user                  |
+| `call.answer`    | `{ target_user_id, sdp }`                                 | Accept an incoming call            |
+| `call.ice`       | `{ target_user_id, candidate }`                           | Send an ICE candidate              |
+| `call.end`       | `{ target_user_id }`                                      | End/hang up the call               |
+| `call.decline`   | `{ target_user_id }`                                      | Decline an incoming call           |
 
 ---
 
 ## Security Notes
 
-### JWT Storage Strategy
+### Token storage
 
-Access tokens are stored in **memory only** (Zustand store, never `localStorage`).
-Refresh tokens are stored in an **HttpOnly Secure SameSite=Strict cookie** set by
-the `/api/auth/login` and `/api/auth/refresh` responses.
-This protects against XSS (no JS access to refresh token) while remaining CSRF-safe
-for the API-only cookie usage pattern.
+- **Access tokens** (15 min) are stored in `localStorage` and sent as `Authorization: Bearer` headers. The client auto-refreshes 30s before expiry.
+- **Refresh tokens** (7 days) live in an **HttpOnly** cookie set through the Next.js `app/api/auth/*` proxy routes, so they are never readable by JavaScript.
+- Passwords are hashed with **Argon2**.
 
-### End-to-End Encryption
+### Encryption status
 
-Messages are encrypted client-side with **ChaCha20-Poly1305** before being sent
-to the server. The server stores and relays ciphertext only — it never sees
-plaintext message content. Key exchange uses **X25519 Diffie-Hellman** for 1:1
-chats (each user's key pair is generated in the browser and the public key is
-registered with the backend). Group chat encryption uses a symmetric room key
-wrapped with each member's public key.
+The repo ships a `backend/src/crypto/` module (ChaCha20-Poly1305 AEAD + X25519 key exchange) as **prepared scaffolding**, but end-to-end encryption is **not active**: messages are stored and relayed in plaintext. Do not deploy this as-is with sensitive data.
 
-> **Upgrade path:** the current implementation uses a simplified symmetric model
-> suitable for an MVP. A full Signal Double-Ratchet protocol implementation is
-> the recommended upgrade for production-grade forward secrecy.
+### CORS
 
-### CORS Configuration
+The backend only allows the origins listed in `CORS_ORIGIN` (comma-separated). **Do not** use `*` in production. Note `allow_credentials(true)` requires explicit methods/headers (not wildcards).
 
-The Axum backend uses `tower-http` CORS middleware configured to allow only the
-origin specified in `FRONTEND_URL`. **Do not set `FRONTEND_URL=*` in production.**
+### Media
 
-### Rate Limiting
-
-`tower-governor` middleware enforces per-IP rate limits on all HTTP routes.
-Default: 100 requests / 10 seconds per IP. Auth endpoints are additionally
-limited to 10 requests / minute to mitigate brute-force attacks.
+Object-storage buckets are public by design so the client can display media directly. Presigned **PUT** URLs are short-lived (5 minutes) and scoped to the caller's room (server verifies membership).
 
 ---
 

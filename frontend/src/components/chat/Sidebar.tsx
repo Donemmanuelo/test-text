@@ -1,10 +1,22 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Search, Plus, LogOut, MessageCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  Search,
+  Plus,
+  LogOut,
+  MessageCircle,
+  MoreVertical,
+  Users,
+  User as UserIcon,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { RoomItem } from "./RoomItem";
+import { NewChatModal } from "./NewChatModal";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { useRooms } from "@/hooks/useRooms";
 import { useChatStore } from "@/store/chatStore";
@@ -15,9 +27,19 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeRoomId }: SidebarProps) {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
+  const [showNewChat, setShowNewChat] = useState(false);
+  const [newChatTab, setNewChatTab] = useState<"dm" | "group">("dm");
+  const [menuOpen, setMenuOpen] = useState(false);
   const { user, logout } = useAuth();
   const { rooms, isLoading, isError } = useRooms();
+
+  const openNewChat = (tab: "dm" | "group") => {
+    setNewChatTab(tab);
+    setMenuOpen(false);
+    setShowNewChat(true);
+  };
 
   const filteredRooms = useMemo(() => {
     if (!searchQuery.trim()) return rooms;
@@ -36,7 +58,7 @@ export function Sidebar({ activeRoomId }: SidebarProps) {
   return (
     <aside className="flex flex-col h-full bg-white border-r border-gray-200">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-[#075e54] text-white shrink-0">
+      <div className="relative flex items-center justify-between px-4 py-3 bg-[#075e54] text-white shrink-0">
         <div className="flex items-center gap-2.5">
           {user && (
             <Avatar
@@ -53,17 +75,66 @@ export function Sidebar({ activeRoomId }: SidebarProps) {
             className="p-2 rounded-full hover:bg-white/10 transition-colors"
             aria-label="New chat"
             title="New chat"
+            onClick={() => openNewChat("dm")}
           >
             <Plus className="w-5 h-5" />
           </button>
+
+          {/* Main menu */}
           <button
-            className="p-2 rounded-full hover:bg-white/10 transition-colors"
-            aria-label="Sign out"
-            title="Sign out"
-            onClick={logout}
+            className={cn(
+              "p-2 rounded-full hover:bg-white/10 transition-colors",
+              menuOpen && "bg-white/15"
+            )}
+            aria-label="Menu"
+            title="Menu"
+            onClick={() => setMenuOpen((v) => !v)}
           >
-            <LogOut className="w-4.5 h-4.5" />
+            <MoreVertical className="w-5 h-5" />
           </button>
+
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
+              <div className="absolute top-12 right-2 z-30 min-w-[200px] rounded-xl bg-white shadow-xl border border-gray-100 py-1">
+                <button
+                  onClick={() => openNewChat("dm")}
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <UserIcon className="w-4 h-4 text-gray-500" />
+                  New chat
+                </button>
+                <button
+                  onClick={() => openNewChat("group")}
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <Users className="w-4 h-4 text-gray-500" />
+                  New group
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    router.push("/settings");
+                  }}
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <SettingsIcon className="w-4 h-4 text-gray-500" />
+                  Settings
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    logout();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-500 hover:bg-gray-50"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Log out
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -120,6 +191,14 @@ export function Sidebar({ activeRoomId }: SidebarProps) {
             />
           ))}
       </div>
+
+      {/* New chat / group modal */}
+      {showNewChat && (
+        <NewChatModal
+          initialTab={newChatTab}
+          onClose={() => setShowNewChat(false)}
+        />
+      )}
     </aside>
   );
 }

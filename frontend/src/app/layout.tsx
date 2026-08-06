@@ -5,6 +5,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { CallOverlay } from "@/components/chat/CallOverlay";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -44,6 +45,7 @@ export default function RootLayout({
       </head>
       <body className={`${inter.className} antialiased bg-gray-100`}>
         <Providers>{children}</Providers>
+        <CallOverlay />
       </body>
     </html>
   );

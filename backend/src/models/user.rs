@@ -46,7 +46,7 @@ impl From<User> for UserResponse {
 }
 
 /// What other users see
-#[derive(Debug, Clone, Serialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct PublicUser {
     pub id: Uuid,
     pub display_name: String,

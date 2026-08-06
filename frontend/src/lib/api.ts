@@ -173,6 +173,20 @@ export const rooms = {
       `/api/rooms/${encodeURIComponent(id)}/members`
     );
   },
+
+  async addMember(id: string, userId: string): Promise<RoomMember> {
+    return request<RoomMember>(`/api/rooms/${encodeURIComponent(id)}/members`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    });
+  },
+
+  async removeMember(id: string, userId: string): Promise<void> {
+    return request<void>(
+      `/api/rooms/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`,
+      { method: "DELETE" }
+    );
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -230,6 +244,16 @@ export const messages = {
 export const media = {
   async presign(data: PresignRequest): Promise<PresignResponse> {
     return request<PresignResponse>("/api/media/presign", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async presignAvatar(data: {
+    filename: string;
+    content_type: string;
+  }): Promise<PresignResponse> {
+    return request<PresignResponse>("/api/media/presign-avatar", {
       method: "POST",
       body: JSON.stringify(data),
     });

@@ -16,6 +16,11 @@ interface MessageListProps {
   isFetchingMore: boolean;
   onLoadMore: () => void;
   onMessageVisible: (messageId: string) => void;
+  onReply?: (message: Message) => void;
+  onEdit?: (message: Message, content: string) => Promise<void>;
+  onDelete?: (message: Message) => Promise<void>;
+  isMessageBusy?: boolean;
+  searchQuery?: string;
 }
 
 export function MessageList({
@@ -26,6 +31,11 @@ export function MessageList({
   isFetchingMore,
   onLoadMore,
   onMessageVisible,
+  onReply,
+  onEdit,
+  onDelete,
+  isMessageBusy = false,
+  searchQuery,
 }: MessageListProps) {
   const currentUser = useAuthStore((s) => s.user) as User;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -93,6 +103,13 @@ export function MessageList({
     );
   }
 
+  // Client-side search filter for "search in chat"
+  const visibleMessages = searchQuery
+    ? messages.filter((m) =>
+        m.content.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : messages;
+
   if (messages.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
@@ -128,13 +145,33 @@ export function MessageList({
         </div>
       )}
 
+      {/* No search matches */}
+      {searchQuery && visibleMessages.length === 0 && (
+        <div className="flex justify-center py-10">
+          <span className="text-sm text-gray-500 bg-white/80 rounded-full px-4 py-1.5 shadow-sm">
+            No matching messages
+          </span>
+        </div>
+      )}
+
+      {/* Search results banner */}
+      {searchQuery && visibleMessages.length > 0 && (
+        <div className="flex justify-center py-2">
+          <span className="text-xs text-gray-500 bg-white/80 rounded-full px-3 py-0.5 shadow-sm">
+            {visibleMessages.length} matching message
+            {visibleMessages.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+      )}
+
       {/* Messages with date separators */}
-      {messages.map((message, idx) => {
-        const prevMessage = idx > 0 ? messages[idx - 1] : null;
+      {visibleMessages.map((message, idx) => {
+        const prevMessage = idx > 0 ? visibleMessages[idx - 1] : null;
         const showDateSep =
           !prevMessage || !isSameDay(prevMessage.created_at, message.created_at);
 
-        const nextMessage = idx < messages.length - 1 ? messages[idx + 1] : null;
+        const nextMessage =
+          idx < visibleMessages.length - 1 ? visibleMessages[idx + 1] : null;
         const isLastInRun =
           !nextMessage || nextMessage.sender_id !== message.sender_id;
 
@@ -179,6 +216,10 @@ export function MessageList({
                 currentUser={currentUser}
                 isGroup={room.is_group}
                 showAvatar={showAvatar}
+                onReply={onReply}
+                onEdit={onEdit}
+                onDelete={onDelete}
+                isBusy={isMessageBusy}
               />
             </div>
           </div>

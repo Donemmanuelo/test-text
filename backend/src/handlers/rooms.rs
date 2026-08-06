@@ -9,8 +9,14 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
+    handlers::messages::enrich_message,
     middleware::auth::AuthUser,
-    models::room::{AddMemberRequest, CreateRoomRequest, Room, RoomMember},
+    models::message::Message,
+    models::room::{
+        AddMemberRequest, CreateRoomRequest, Room, RoomMember, RoomMemberRow,
+        RoomMemberWithUser, RoomWithDetails,
+    },
+    models::user::PublicUser,
     AppState,
 };
 
@@ -36,11 +42,96 @@ async fn require_room_member(
     Ok(())
 }
 
+/// Build the client-facing room payload: members (with profiles), latest
+/// non-deleted message, and the caller's unread count.
+async fn load_room_details(
+    db: &sqlx::PgPool,
+    room: Room,
+    user_id: Uuid,
+) -> AppResult<RoomWithDetails> {
+    let member_rows = sqlx::query_as!(
+        RoomMemberRow,
+        r#"SELECT rm.room_id, rm.user_id, rm.role, rm.joined_at,
+                  u.display_name, u.avatar_url, u.status_message, u.last_seen_at
+           FROM room_members rm
+           JOIN users u ON u.id = rm.user_id
+           WHERE rm.room_id = $1
+           ORDER BY rm.joined_at"#,
+        room.id
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let members = member_rows
+        .into_iter()
+        .map(|r| RoomMemberWithUser {
+            room_id: r.room_id,
+            user_id: r.user_id,
+            role: r.role,
+            joined_at: r.joined_at,
+            user: PublicUser {
+                id: r.user_id,
+                display_name: r.display_name,
+                avatar_url: r.avatar_url,
+                status_message: r.status_message,
+                last_seen_at: r.last_seen_at,
+            },
+        })
+        .collect::<Vec<_>>();
+
+    let last_message = sqlx::query_as!(
+        Message,
+        r#"SELECT * FROM messages
+           WHERE room_id = $1 AND deleted_at IS NULL
+           ORDER BY created_at DESC
+           LIMIT 1"#,
+        room.id
+    )
+    .fetch_optional(db)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let last_message = match last_message {
+        Some(m) => Some(enrich_message(db, m).await?),
+        None => None,
+    };
+
+    let unread_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*)
+           FROM messages m
+           WHERE m.room_id = $1
+             AND m.sender_id <> $2
+             AND m.deleted_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM message_reads r
+               WHERE r.message_id = m.id AND r.user_id = $2
+             )"#,
+        room.id,
+        user_id
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?
+    .unwrap_or(0);
+
+    Ok(RoomWithDetails {
+        id: room.id,
+        name: room.name,
+        is_group: room.is_group,
+        created_by: room.created_by,
+        created_at: room.created_at,
+        members,
+        last_message,
+        unread_count,
+    })
+}
+
 /// GET /api/rooms
 pub async fn list_rooms(
     auth: AuthUser,
     State(state): State<Arc<AppState>>,
-) -> AppResult<Json<Vec<Room>>> {
+) -> AppResult<Json<Vec<RoomWithDetails>>> {
     let rooms = sqlx::query_as!(
         Room,
         r#"SELECT r.id, r.name, r.is_group, r.created_by, r.created_at
@@ -54,7 +145,12 @@ pub async fn list_rooms(
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
 
-    Ok(Json(rooms))
+    let mut out = Vec::with_capacity(rooms.len());
+    for room in rooms {
+        out.push(load_room_details(&state.db, room, auth.user_id).await?);
+    }
+
+    Ok(Json(out))
 }
 
 /// POST /api/rooms
@@ -62,7 +158,7 @@ pub async fn create_room(
     auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateRoomRequest>,
-) -> AppResult<(StatusCode, Json<Room>)> {
+) -> AppResult<(StatusCode, Json<RoomWithDetails>)> {
     if req.member_ids.is_empty() {
         return Err(AppError::BadRequest("member_ids cannot be empty".to_string()));
     }
@@ -70,6 +166,33 @@ pub async fn create_room(
         return Err(AppError::BadRequest(
             "Direct message rooms must have exactly one other member".to_string(),
         ));
+    }
+
+    // Reuse an existing 1:1 room between these two users instead of
+    // creating a duplicate conversation.
+    if !req.is_group {
+        let other_id = req.member_ids[0];
+        let existing = sqlx::query_as!(
+            Room,
+            r#"SELECT r.id, r.name, r.is_group, r.created_by, r.created_at
+               FROM rooms r
+               WHERE r.is_group = FALSE
+                 AND EXISTS (SELECT 1 FROM room_members rm WHERE rm.room_id = r.id AND rm.user_id = $1)
+                 AND EXISTS (SELECT 1 FROM room_members rm WHERE rm.room_id = r.id AND rm.user_id = $2)
+                 AND (SELECT COUNT(*) FROM room_members rm WHERE rm.room_id = r.id) = 2
+               LIMIT 1"#,
+            auth.user_id,
+            other_id
+        )
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+        if let Some(existing_room) = existing {
+            tracing::info!(room_id = %existing_room.id, "Reused existing DM room");
+            let details = load_room_details(&state.db, existing_room, auth.user_id).await?;
+            return Ok((StatusCode::OK, Json(details)));
+        }
     }
 
     let mut tx = state
@@ -126,8 +249,10 @@ pub async fn create_room(
     }
     state.hub.join_room(auth.user_id, room.id);
 
-    tracing::info!(room_id = %room.id, created_by = %auth.user_id, "Room created");
-    Ok((StatusCode::CREATED, Json(room)))
+    let details = load_room_details(&state.db, room, auth.user_id).await?;
+
+    tracing::info!(room_id = %details.id, created_by = %auth.user_id, "Room created");
+    Ok((StatusCode::CREATED, Json(details)))
 }
 
 /// GET /api/rooms/:id
@@ -135,7 +260,7 @@ pub async fn get_room(
     auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(room_id): Path<Uuid>,
-) -> AppResult<Json<Room>> {
+) -> AppResult<Json<RoomWithDetails>> {
     require_room_member(&state.db, room_id, auth.user_id).await?;
 
     let room = sqlx::query_as!(Room, "SELECT * FROM rooms WHERE id = $1", room_id)
@@ -144,7 +269,7 @@ pub async fn get_room(
         .map_err(|e| AppError::Internal(e.into()))?
         .ok_or_else(|| AppError::NotFound(format!("Room {room_id} not found")))?;
 
-    Ok(Json(room))
+    Ok(Json(load_room_details(&state.db, room, auth.user_id).await?))
 }
 
 /// GET /api/rooms/:id/members

@@ -1,4 +1,3 @@
-import Image from "next/image";
 import { cn, getInitials } from "@/lib/utils";
 
 interface AvatarProps {
@@ -46,7 +45,8 @@ export function Avatar({
       style={{ width: size, height: size }}
     >
       {src ? (
-        <Image
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
           src={src}
           alt={name}
           width={size}

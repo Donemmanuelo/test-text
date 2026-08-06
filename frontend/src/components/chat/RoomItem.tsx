@@ -5,6 +5,7 @@ import { cn, truncate, formatRoomTime } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
 import { useAuthStore } from "@/store/authStore";
 import { usePresence } from "@/hooks/usePresence";
+import { useSettingsStore } from "@/store/settingsStore";
 import type { Room } from "@/lib/types";
 
 interface RoomItemProps {
@@ -15,6 +16,7 @@ interface RoomItemProps {
 export function RoomItem({ room, isActive }: RoomItemProps) {
   const router = useRouter();
   const currentUser = useAuthStore((s) => s.user);
+  const showPreviews = useSettingsStore((s) => s.showPreviews);
 
   // For 1:1 chats, show the other member
   const otherMember = !room.is_group
@@ -33,6 +35,8 @@ export function RoomItem({ room, isActive }: RoomItemProps) {
   const lastMessagePreview = room.last_message
     ? room.last_message.deleted_at
       ? "Message deleted"
+      : !showPreviews
+      ? "New message"
       : room.last_message.content_type === "image"
       ? "📷 Photo"
       : room.last_message.content_type === "file"

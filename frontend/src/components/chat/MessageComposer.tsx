@@ -1,30 +1,38 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Send, Paperclip, X } from "lucide-react";
+import { Send, Paperclip, Camera, X, Reply } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getWsManager } from "@/lib/ws";
 import { media as mediaApi } from "@/lib/api";
-import type { SendMessageRequest } from "@/lib/types";
+import type { Message, SendMessageRequest } from "@/lib/types";
 import { Spinner } from "@/components/ui/Spinner";
+import { useSettingsStore } from "@/store/settingsStore";
+import { CameraCaptureModal } from "./CameraCaptureModal";
 
 const TYPING_DEBOUNCE_MS = 2_000;
 const MAX_ROWS = 5;
 
 interface MessageComposerProps {
   roomId: string;
-  onSend: (data: SendMessageRequest) => Promise<void>;
+  onSend: (data: SendMessageRequest) => Promise<unknown>;
   isSending: boolean;
+  replyTarget?: Message | null;
+  onCancelReply?: () => void;
 }
 
 export function MessageComposer({
   roomId,
   onSend,
   isSending,
+  replyTarget = null,
+  onCancelReply,
 }: MessageComposerProps) {
   const [text, setText] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const enterToSend = useSettingsStore((s) => s.enterToSend);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -67,18 +75,26 @@ export function MessageComposer({
     resetTypingTimer();
   };
 
-  const handleSubmit = useCallback(async () => {
+const handleSubmit = useCallback(async () => {
     const content = text.trim();
     if (!content || isSending) return;
     sendTypingStop();
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     setText("");
-    await onSend({ content, content_type: "text" });
+    await onSend({
+      content,
+      content_type: "text",
+      reply_to_id: replyTarget?.id ?? undefined,
+    });
+    onCancelReply?.();
     textareaRef.current?.focus();
-  }, [text, isSending, onSend, sendTypingStop]);
+  }, [text, isSending, onSend, sendTypingStop, replyTarget, onCancelReply]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key !== "Enter") return;
+    // Enter sends by default; when "Enter to send" is off, use Ctrl/Cmd+Enter.
+    const sendKey = enterToSend ? !e.shiftKey : e.ctrlKey || e.metaKey;
+    if (sendKey) {
       e.preventDefault();
       handleSubmit();
     }
@@ -97,7 +113,13 @@ export function MessageComposer({
         room_id: roomId,
       });
       await mediaApi.uploadToS3(upload_url, file);
-      const contentType = file.type.startsWith("image/") ? "image" : "file";
+      const contentType = file.type.startsWith("image/")
+        ? "image"
+        : file.type.startsWith("video/")
+        ? "video"
+        : file.type.startsWith("audio/")
+        ? "audio"
+        : "file";
       await onSend({ content: file_url, content_type: contentType });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Upload failed";
@@ -112,6 +134,36 @@ export function MessageComposer({
 
   return (
     <div className="px-3 py-2 border-t border-gray-200 bg-white">
+      {/* Reply bar */}
+      {replyTarget && (
+        <div className="flex items-center gap-2 mb-2 px-3 py-2 rounded-lg bg-[#075e54]/[0.06] border border-[#075e54]/15">
+          <Reply className="w-4 h-4 text-[#075e54] shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-[#075e54]">
+              Replying to {replyTarget.sender?.display_name ?? "message"}
+            </p>
+            <p className="text-xs text-gray-500 truncate">
+              {replyTarget.content_type === "text"
+                ? replyTarget.content
+                : replyTarget.content_type === "image"
+                ? "📷 Photo"
+                : replyTarget.content_type === "audio"
+                ? "🎵 Audio"
+                : replyTarget.content_type === "video"
+                ? "🎬 Video"
+                : "📎 File"}
+            </p>
+          </div>
+          <button
+            onClick={onCancelReply}
+            className="p-1 text-gray-400 hover:text-gray-600"
+            aria-label="Cancel reply"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {uploadError && (
         <div className="flex items-center gap-2 mb-2 px-3 py-2 rounded-lg bg-red-50 text-xs text-red-600">
           <span className="flex-1">{uploadError}</span>
@@ -122,6 +174,17 @@ export function MessageComposer({
       )}
 
       <div className="flex items-end gap-2">
+        {/* Camera button */}
+        <button
+          type="button"
+          onClick={() => setCameraOpen(true)}
+          disabled={isUploading}
+          className="shrink-0 p-2 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+          aria-label="Take photo"
+        >
+          <Camera className="w-5 h-5" />
+        </button>
+
         {/* Attach button */}
         <button
           type="button"
@@ -137,7 +200,7 @@ export function MessageComposer({
           ref={fileInputRef}
           type="file"
           className="hidden"
-          accept="image/*,application/*,audio/*"
+          accept="image/*,video/*,audio/*,application/*"
           onChange={handleFileSelect}
         />
 
@@ -175,6 +238,15 @@ export function MessageComposer({
           )}
         </button>
       </div>
+
+      {/* Camera capture modal */}
+      {cameraOpen && (
+        <CameraCaptureModal
+          roomId={roomId}
+          onSend={onSend}
+          onClose={() => setCameraOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -12,8 +12,8 @@ use crate::error::AppError;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: Uuid,
-    pub exp: usize,
-    pub iat: usize,
+    pub exp: i64,
+    pub iat: i64,
 }
 
 #[derive(Debug, Clone)]

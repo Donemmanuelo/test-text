@@ -14,8 +14,18 @@ export function messagesQueryKey(roomId: string) {
 }
 
 export function useMessages(roomId: string) {
-  const store = useChatStore();
   const queryClient = useQueryClient();
+
+  // Select only the slices this hook needs. Using the whole store in an effect
+  // dependency causes an infinite update loop (every setMessages write would
+  // change the store reference and re-trigger the effect).
+  const messages = useChatStore((s) => s.messages[roomId] ?? []);
+  const setMessages = useChatStore((s) => s.setMessages);
+  const setCursor = useChatStore((s) => s.setCursor);
+  const appendMessage = useChatStore((s) => s.appendMessage);
+  const updateMessage = useChatStore((s) => s.updateMessage);
+  const deleteMessage = useChatStore((s) => s.deleteMessage);
+  const markMessageRead = useChatStore((s) => s.markMessageRead);
 
   const query = useInfiniteQuery({
     queryKey: messagesQueryKey(roomId),
@@ -31,22 +41,33 @@ export function useMessages(roomId: string) {
     enabled: !!roomId,
   });
 
-  // Sync to Zustand
+  // Sync to Zustand (guard against redundant writes to avoid render loops)
   useEffect(() => {
     if (!query.data) return;
-    const allMessages = query.data.pages.flatMap((p) => p.messages);
-    // pages are in reverse chronological order (oldest first in array)
-    store.setMessages(roomId, allMessages);
+    // Each page is newest-first (backend orders DESC). Flattening pages gives
+    // newest → oldest; reverse so the store holds chronological order
+    // (oldest → newest) for correct rendering and appending.
+    const allMessages = query.data.pages.flatMap((p) => p.messages).reverse();
+    const existing = useChatStore.getState().messages[roomId] ?? [];
+    const isSame =
+      existing.length === allMessages.length &&
+      existing.every((m, i) => m.id === allMessages[i].id);
+    if (!isSame) {
+      setMessages(roomId, allMessages);
+    }
+
     const lastCursor =
       query.data.pages[query.data.pages.length - 1]?.next_cursor ?? null;
-    store.setCursor(roomId, lastCursor);
-  }, [query.data, roomId, store]);
+    if (useChatStore.getState().cursors[roomId] !== lastCursor) {
+      setCursor(roomId, lastCursor);
+    }
+  }, [query.data, roomId, setMessages, setCursor]);
 
   const sendMutation = useMutation({
     mutationFn: (data: SendMessageRequest) =>
       messagesApi.send(roomId, data),
     onSuccess: (msg) => {
-      store.appendMessage(msg);
+      appendMessage(msg);
       queryClient.invalidateQueries({ queryKey: ["rooms"] });
     },
   });
@@ -55,8 +76,24 @@ export function useMessages(roomId: string) {
     mutationFn: (messageId: string) => messagesApi.read(messageId),
   });
 
+  const editMutation = useMutation({
+    mutationFn: ({
+      messageId,
+      content,
+    }: {
+      messageId: string;
+      content: string;
+    }) => messagesApi.edit(messageId, content),
+    onSuccess: (msg) => updateMessage(msg),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (messageId: string) => messagesApi.delete(messageId),
+    onSuccess: (_data, messageId) => deleteMessage(messageId, roomId),
+  });
+
   return {
-    messages: store.messages[roomId] ?? [],
+    messages,
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,
@@ -66,5 +103,9 @@ export function useMessages(roomId: string) {
     sendMessage: sendMutation.mutateAsync,
     isSending: sendMutation.isPending,
     markRead: readMutation.mutate,
+    editMessage: editMutation.mutateAsync,
+    isEditing: editMutation.isPending,
+    deleteMessage: deleteMutation.mutateAsync,
+    isDeleting: deleteMutation.isPending,
   };
 }

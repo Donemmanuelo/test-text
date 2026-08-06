@@ -1,46 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useAuthStore } from "@/store/authStore";
-import { useRouter } from "next/navigation";
-import { setAccessToken } from "@/lib/api";
-import { readAccessToken, refreshAccessToken } from "@/lib/auth";
-import { initWsManager, getWsManager } from "@/lib/ws";
 import { Sidebar } from "@/components/chat/Sidebar";
-import { Spinner } from "@/components/ui/Spinner";
 import { MessageCircle } from "lucide-react";
-import { useWebSocket } from "@/hooks/useWebSocket";
 
 export default function ChatPage() {
-  const router = useRouter();
-  const { user, isHydrated, setAccessToken: storeToken } = useAuthStore();
-  const [isInitialising, setIsInitialising] = useState(true);
-
-  useEffect(() => {
-    if (!isHydrated) return;
-    async function init() {
-      if (!user) { router.replace("/login"); return; }
-      let token = readAccessToken();
-      if (!token) token = await refreshAccessToken();
-      if (!token) { router.replace("/login"); return; }
-      setAccessToken(token);
-      storeToken(token);
-      if (!getWsManager()) initWsManager(token);
-      setIsInitialising(false);
-    }
-    init();
-  }, [isHydrated, user, router, storeToken]);
-
-  useWebSocket();
-
-  if (isInitialising) {
-    return (
-      <div className="h-dvh flex items-center justify-center bg-gray-50">
-        <Spinner size="lg" className="text-[#075e54]" />
-      </div>
-    );
-  }
-
   return (
     <div className="flex h-dvh overflow-hidden">
       <div className="w-full md:w-80 lg:w-96 shrink-0 h-full">

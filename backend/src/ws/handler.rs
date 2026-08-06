@@ -17,7 +17,10 @@ use uuid::Uuid;
 use crate::{
     error::AppError,
     middleware::auth::Claims,
-    ws::events::{ClientEvent, PresenceUpdatePayload, TypingPayload, WsEvent},
+    ws::events::{
+        CallAnswerPayload, CallEndPayload, CallIcePayload, CallOfferPayload, ClientEvent,
+        PresenceUpdatePayload, TypingPayload, WsEvent,
+    },
     AppState,
 };
 
@@ -182,6 +185,45 @@ async fn handle_client_event(state: &Arc<AppState>, user_id: Uuid, text: &str) {
         }
         ClientEvent::PresencePing => {
             set_presence_online(state, user_id).await;
+        }
+        // ── Call signaling (peer-to-peer, routed to the target user) ──────────
+        ClientEvent::CallOffer {
+            target_user_id,
+            sdp,
+            mode,
+        } => {
+            state.hub.send_to_user(
+                target_user_id,
+                WsEvent::CallOffer(CallOfferPayload {
+                    caller_id: user_id,
+                    sdp,
+                    mode,
+                }),
+            );
+        }
+        ClientEvent::CallAnswer { target_user_id, sdp } => {
+            state.hub.send_to_user(
+                target_user_id,
+                WsEvent::CallAnswer(CallAnswerPayload { callee_id: user_id, sdp }),
+            );
+        }
+        ClientEvent::CallIce { target_user_id, candidate } => {
+            state.hub.send_to_user(
+                target_user_id,
+                WsEvent::CallIce(CallIcePayload { user_id, candidate }),
+            );
+        }
+        ClientEvent::CallEnd { target_user_id } => {
+            state.hub.send_to_user(
+                target_user_id,
+                WsEvent::CallEnd(CallEndPayload { user_id }),
+            );
+        }
+        ClientEvent::CallDecline { target_user_id } => {
+            state.hub.send_to_user(
+                target_user_id,
+                WsEvent::CallDecline(CallEndPayload { user_id }),
+            );
         }
     }
 }

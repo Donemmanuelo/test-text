@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::models::message::Message;
+use crate::models::message::MessageWithDetails;
 
 // ── Outbound events (server → client) ───────────────────────────────────────
 
@@ -10,10 +10,10 @@ use crate::models::message::Message;
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum WsEvent {
     #[serde(rename = "message.new")]
-    MessageNew(Message),
+    MessageNew(MessageWithDetails),
 
     #[serde(rename = "message.edited")]
-    MessageEdited(Message),
+    MessageEdited(MessageWithDetails),
 
     #[serde(rename = "message.deleted")]
     MessageDeleted(MessageDeletedPayload),
@@ -29,6 +29,21 @@ pub enum WsEvent {
 
     #[serde(rename = "typing.stop")]
     TypingStop(TypingPayload),
+
+    #[serde(rename = "call.offer")]
+    CallOffer(CallOfferPayload),
+
+    #[serde(rename = "call.answer")]
+    CallAnswer(CallAnswerPayload),
+
+    #[serde(rename = "call.ice")]
+    CallIce(CallIcePayload),
+
+    #[serde(rename = "call.end")]
+    CallEnd(CallEndPayload),
+
+    #[serde(rename = "call.decline")]
+    CallDecline(CallEndPayload),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,10 +79,43 @@ pub struct TypingPayload {
     pub room_id: Uuid,
 }
 
+// ── Call signaling payloads ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CallMode {
+    Voice,
+    Video,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallOfferPayload {
+    pub caller_id: Uuid,
+    pub sdp: String,
+    pub mode: CallMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallAnswerPayload {
+    pub callee_id: Uuid,
+    pub sdp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallIcePayload {
+    pub user_id: Uuid,
+    pub candidate: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallEndPayload {
+    pub user_id: Uuid,
+}
+
 // ── Inbound events (client → server) ────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ClientEvent {
     #[serde(rename = "typing.start")]
     TypingStart { room_id: Uuid },
@@ -77,4 +125,23 @@ pub enum ClientEvent {
 
     #[serde(rename = "presence.ping")]
     PresencePing,
+
+    #[serde(rename = "call.offer")]
+    CallOffer {
+        target_user_id: Uuid,
+        sdp: String,
+        mode: CallMode,
+    },
+
+    #[serde(rename = "call.answer")]
+    CallAnswer { target_user_id: Uuid, sdp: String },
+
+    #[serde(rename = "call.ice")]
+    CallIce { target_user_id: Uuid, candidate: String },
+
+    #[serde(rename = "call.end")]
+    CallEnd { target_user_id: Uuid },
+
+    #[serde(rename = "call.decline")]
+    CallDecline { target_user_id: Uuid },
 }
